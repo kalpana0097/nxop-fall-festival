@@ -306,6 +306,21 @@
   }
 
 
+  /* RSVP Attendee List */
+  .rsvp-attendees {
+    width: 1100px; margin-top: 18px; background: #fdf6ec; border-radius: 14px;
+    padding: 20px 28px; box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+  }
+  .rsvp-attendees h3 {
+    font-family: 'Playfair Display', serif; color: #8B4513; font-size: 20px; margin-bottom: 12px;
+  }
+  .rsvp-names { display: flex; flex-wrap: wrap; gap: 8px; }
+  .rsvp-chip {
+    background: linear-gradient(135deg, #27AE60, #2ECC71); color: white;
+    padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 600;
+  }
+  .rsvp-empty { color: #bfa88a; font-style: italic; font-size: 14px; }
+
   /* RSVP Button */
   .rsvp-btn {
     background: linear-gradient(135deg, #27ae60, #2ecc71);
@@ -477,6 +492,12 @@
 
     </div>
   </div>
+  <div class="rsvp-attendees">
+    <h3>&#127881; Who's Coming</h3>
+    <div class="rsvp-names" id="rsvp-names-list">
+      <span class="rsvp-empty">No RSVPs yet — be the first!</span>
+    </div>
+  </div>
 </div>
 
 <!-- ═══════════════════════════
@@ -587,46 +608,69 @@
     supplies: ['Paper Plates & Napkins', 'Cups & Utensils', 'Fall Table Decorations', 'Serving Spoons & Tongs']
   };
 
+  const API = '/api/data';
   const signups = { entrees:[], appetizers:[], sides:[], desserts:[], drinks:[], supplies:[] };
 
-  function loadFromStorage() {
-    const s = localStorage.getItem('nxop-potluck-signups');
-    if (s) { const d = JSON.parse(s); Object.keys(d).forEach(c => { if (signups[c] !== undefined) signups[c] = d[c]; }); }
+  async function loadData() {
+    try {
+      const res = await fetch(API);
+      const data = await res.json();
+      Object.keys(signups).forEach(c => signups[c] = []);
+      Object.keys(data.signups || {}).forEach(c => {
+        if (signups[c] !== undefined) signups[c] = data.signups[c];
+      });
+      if (data.rsvpList) { rsvpList = data.rsvpList; }
+    } catch(err) {
+      console.warn('API unavailable, using localStorage', err);
+      var s = localStorage.getItem('nxop-potluck-signups');
+      if (s) { var d = JSON.parse(s); Object.keys(d).forEach(function(c) { if (signups[c] !== undefined) signups[c] = d[c]; }); }
+      rsvpList = JSON.parse(localStorage.getItem('nxop-rsvp') || '[]');
+    }
     Object.keys(signups).forEach(c => renderList(c));
     updateCounts();
+    updateRSVPDisplay();
   }
 
-  function saveToStorage() { localStorage.setItem('nxop-potluck-signups', JSON.stringify(signups)); }
+  async function postAPI(payload) {
+    try {
+      await fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    } catch(err) { console.warn('API post failed:', err); }
+  }
 
-  function addItem(cat) {
-    const nameInp = document.getElementById('name-' + cat);
-    const dishInp = document.getElementById('dish-' + cat);
-    const name = nameInp.value.trim();
-    const dish = dishInp.value.trim();
+  async function addItem(cat) {
+    var nameInp = document.getElementById('name-' + cat);
+    var dishInp = document.getElementById('dish-' + cat);
+    var name = nameInp.value.trim();
+    var dish = dishInp.value.trim();
     if (!name || !dish) { if (!name) nameInp.focus(); else dishInp.focus(); return; }
-    signups[cat].push({ name, dish });
+    signups[cat].push({ name: name, dish: dish, id: 'tmp' });
     nameInp.value = ''; dishInp.value = ''; nameInp.focus();
-    renderList(cat); updateCounts(); saveToStorage();
+    renderList(cat); updateCounts();
+    await postAPI({ action: 'addPotluck', category: cat, name: name, dish: dish });
+    await loadData();
   }
 
-  function removeItem(cat, i) {
+  async function removeItem(cat, i) {
+    var item = signups[cat][i];
     signups[cat].splice(i, 1);
-    renderList(cat); updateCounts(); saveToStorage();
+    renderList(cat); updateCounts();
+    if (item && item.id) await postAPI({ action: 'removePotluck', id: item.id });
+    await loadData();
   }
 
   function renderList(cat) {
-    const list = document.getElementById('list-' + cat);
-    const items = signups[cat], sugg = defaults[cat] || [];
-    let html = '', n = 1;
-    items.forEach((item, i) => {
-      const entry = typeof item === 'string' ? esc(item) : '<strong>' + esc(item.name) + '</strong> &mdash; ' + esc(item.dish);
+    var list = document.getElementById('list-' + cat);
+    var items = signups[cat], sugg = defaults[cat] || [];
+    var html = '', n = 1;
+    items.forEach(function(item, i) {
+      var entry = typeof item === 'string' ? esc(item) : '<strong>' + esc(item.name) + '</strong> &mdash; ' + esc(item.dish);
       html += '<li><span class="num">' + n + '</span><span style="flex:1">' + entry + '</span>' +
         '<span style="color:#C0392B;cursor:pointer;font-size:14px" onclick="removeItem(\'' + cat + '\',' + i + ')" title="Remove">&times;</span></li>';
       n++;
     });
-    const rem = Math.max(0, sugg.length - items.length);
-    for (let i = sugg.length - rem; i < sugg.length; i++) {
-      html += '<li><span class="num" style="background:#bfa88a">' + n + '</span><span class="prefilled">' + esc(sugg[i]) +
+    var rem = Math.max(0, sugg.length - items.length);
+    for (var j = sugg.length - rem; j < sugg.length; j++) {
+      html += '<li><span class="num" style="background:#bfa88a">' + n + '</span><span class="prefilled">' + esc(sugg[j]) +
         '</span><span style="font-size:9px;color:#bfa88a;margin-left:auto;font-style:italic">idea</span></li>';
       n++;
     }
@@ -634,11 +678,11 @@
   }
 
   function updateCounts() {
-    let t = 0; const names = new Set();
-    Object.values(signups).forEach(a => {
+    var t = 0; var names = new Set();
+    Object.values(signups).forEach(function(a) {
       t += a.length;
-      a.forEach(item => {
-        const nm = typeof item === 'string' ? item.split(/\s*[—\-–]\s*/)[0].trim() : item.name;
+      a.forEach(function(item) {
+        var nm = typeof item === 'string' ? item.split(/\s*[—\-–]\s*/)[0].trim() : item.name;
         if (nm) names.add(nm.toLowerCase());
       });
     });
@@ -646,21 +690,19 @@
     document.getElementById('count-people').textContent = names.size;
   }
 
-  function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+  function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
-  document.querySelectorAll('.add-form .inp-dish').forEach(inp => {
+  document.querySelectorAll('.add-form .inp-dish').forEach(function(inp) {
     inp.addEventListener('keydown', function(e) { if (e.key === 'Enter') addItem(this.id.replace('dish-', '')); });
   });
-  document.querySelectorAll('.add-form .inp-name').forEach(inp => {
+  document.querySelectorAll('.add-form .inp-name').forEach(function(inp) {
     inp.addEventListener('keydown', function(e) {
       if (e.key === 'Enter') document.getElementById('dish-' + this.id.replace('name-', '')).focus();
     });
   });
 
-  loadFromStorage();
-
   // RSVP
-  var rsvpList = JSON.parse(localStorage.getItem('nxop-rsvp') || '[]');
+  var rsvpList = [];
   function updateRSVPDisplay() {
     var btn = document.querySelector('.rsvp-btn');
     var countEl = document.getElementById('rsvp-count');
@@ -671,20 +713,28 @@
       btn.classList.add('rsvpd');
       btn.innerHTML = '<span class="rsvp-icon">&#10003;</span> You are in, ' + esc(myName.split(' ')[0]) + '! <span class="rsvp-count" id="rsvp-count">' + rsvpList.length + ' going</span>';
     }
+    var namesList = document.getElementById('rsvp-names-list');
+    if (namesList) {
+      if (rsvpList.length === 0) {
+        namesList.innerHTML = '<span class="rsvp-empty">No RSVPs yet — be the first!</span>';
+      } else {
+        namesList.innerHTML = rsvpList.map(function(n) { return '<span class="rsvp-chip">' + esc(n) + '</span>'; }).join('');
+      }
+    }
   }
-  function doRSVP() {
+  async function doRSVP() {
     var existing = localStorage.getItem('nxop-rsvp-me');
     if (existing) { alert('You already RSVPd as ' + existing + '!'); return; }
     var name = prompt('Enter your name to RSVP:');
     if (!name || !name.trim()) return;
-    rsvpList.push(name.trim());
-    localStorage.setItem('nxop-rsvp', JSON.stringify(rsvpList));
-    localStorage.setItem('nxop-rsvp-me', name.trim());
+    name = name.trim();
+    rsvpList.push(name);
+    localStorage.setItem('nxop-rsvp-me', name);
     updateRSVPDisplay();
+    await postAPI({ action: 'addRSVP', name: name });
   }
-  updateRSVPDisplay();
 
-  // Photo Gallery
+  // Photo Gallery (stays local — images are too large for cloud storage)
   var photos = JSON.parse(localStorage.getItem('nxop-photos') || '[]');
   function renderGallery() {
     var grid = document.getElementById('gallery-grid');
@@ -731,7 +781,11 @@
   function closeLightbox() {
     document.getElementById('lightbox').classList.remove('active');
   }
+
+  // Load everything and auto-refresh every 30s
+  loadData();
   renderGallery();
+  setInterval(loadData, 30000);
 </script>
 
 </body>
